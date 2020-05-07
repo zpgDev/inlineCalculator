@@ -1,5 +1,5 @@
 /**
-Inline calculator
+	Inline calculator
  */
 
 package main
@@ -24,7 +24,7 @@ type Splited struct {
 // The sequence of operators matters!
 var operators = [6]string{"+", "-", "*", "/", ":", "^"}
 
-var headInfo = `Inline calculator
+const headInfo = `Inline calculator
 Usage modes:
 	Console: icalc <operand1><operator><operand2>[<operator><operandN>...] | <command>
 	Interactive: <operand1><operator><operand2>[<operator><operandN>...] | <command>`
@@ -65,7 +65,10 @@ func parseOperands(c []string) ([]float64, error) {
 // split expression by operator
 func splitParams(param string) (Splited, error) {
 	var returned Splited
+	// remove all spaces in expression
 	param = strings.Replace(param, " ", "", -1)
+	// bringing to a single operator
+	param = strings.Replace(param, ":", "/", -1)
 	if param == "" {
 		return returned, errors.New("error: no params found")
 	}
@@ -101,22 +104,15 @@ func splitParams(param string) (Splited, error) {
 	return returned, errors.New("error: no operator found")
 }
 
+// check input commands
 func checkCommands(command string) string {
 	res := ""
 	switch command {
-		case "exit":
+		case "exit", "quit", "q":
 			os.Exit(0)
-		case "quit":
-			os.Exit(0)
-		case "q":
-			os.Exit(0)
-		case "-h":
+		case "-h", "--help":
 			res = helpInfo
-		case "--help":
-			res = helpInfo
-		case "-o":
-			res = operatorsInfo
-		case "--operators":
+		case "-o", "--operators":
 			res = operatorsInfo
 	}
 	return res
@@ -138,6 +134,7 @@ func parseParams(params string) (float64, error) {
 	splited.parsedNums = make([]float64, len(splited.nums))
 
 	for index, val := range splited.nums {
+		// checking for expressions in operands
 		match, err := regexp.MatchString(`\d+[+\-*/:^]+\d+`, val)
 		if err != nil {
 			return result, err
@@ -147,6 +144,7 @@ func parseParams(params string) (float64, error) {
 			if err != nil {
 				return result, err
 			}
+			// set result of expression for next calculation
 			splited.parsedNums[index] = matchedCalc
 		} else {
 			parsedNum, err := strconv.ParseFloat(val, 64)
@@ -181,8 +179,6 @@ func calculate(splited Splited) (float64, error) {
 		case "*":
 			result = multiply(nums)
 		case "/":
-			result, err = divide(nums)
-		case ":":
 			result, err = divide(nums)
 		case "^":
 			result = pow(nums)
