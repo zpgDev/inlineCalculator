@@ -1,5 +1,8 @@
 /**
 	Inline calculator
+	This is free software with ABSOLUTELY NO WARRANTY.
+	Author: Pavlo Zubkov
+	(c) 2020
  */
 
 package main
@@ -15,6 +18,17 @@ import (
 	"strings"
 )
 
+const (
+	BLACK = iota
+	RED
+	GREEN
+	YELLOW
+	BLUE
+	MAGENTA
+	CYAN
+	WHITE
+)
+
 type Splited struct {
 	operator string
 	nums []string
@@ -24,7 +38,10 @@ type Splited struct {
 // The sequence of operators matters!
 var operators = [6]string{"+", "-", "*", "/", ":", "^"}
 
+const termText = " icalc> "
+
 const headInfo = `Inline calculator
+This is free software with ABSOLUTELY NO WARRANTY.
 Usage modes:
 	Console: icalc <operand1><operator><operand2>[<operator><operandN>...] | <command>
 	Interactive: <operand1><operator><operand2>[<operator><operandN>...] | <command>`
@@ -36,6 +53,7 @@ For interactive mode run icalc without arguments.
 Commands:
 	-h, --help		for more information about a commands
 	-o, --operators		list of supported operators
+	c, cls, clear		clear terminal in interactive mode
 	q, quit, exit		exit interactive mode
 `
 
@@ -55,6 +73,7 @@ func parseOperands(c []string) ([]float64, error) {
 	for _, num := range c {
 		parsedNum, err := strconv.ParseFloat(num, 64)
 		if err != nil {
+			err = parseError(err)
 			return result, err
 		}
 		result = append(result, parsedNum)
@@ -70,7 +89,7 @@ func splitParams(param string) (Splited, error) {
 	// bringing to a single operator
 	param = strings.Replace(param, ":", "/", -1)
 	if param == "" {
-		return returned, errors.New("error: no params found")
+		return returned, setError("no params found")
 	}
 
 	for _, operator := range operators {
@@ -101,7 +120,7 @@ func splitParams(param string) (Splited, error) {
 		}
 	}
 
-	return returned, errors.New("error: no operator found")
+	return returned, setError("no operator found")
 }
 
 // check input commands
@@ -110,10 +129,13 @@ func checkCommands(command string) string {
 	switch command {
 		case "exit", "quit", "q":
 			os.Exit(0)
+		case "clear", "cls", "c":
+			res = "-clear-"
+			clear()
 		case "-h", "--help":
-			res = helpInfo
+			res = "\n" + helpInfo
 		case "-o", "--operators":
-			res = operatorsInfo
+			res = "\n" + operatorsInfo
 	}
 	return res
 }
@@ -128,7 +150,7 @@ func parseParams(params string) (float64, error) {
 	}
 
 	if len(splited.nums) < 2 {
-		return result, errors.New("error: not enough arguments")
+		return result, setError("not enough arguments")
 	}
 
 	splited.parsedNums = make([]float64, len(splited.nums))
@@ -149,6 +171,7 @@ func parseParams(params string) (float64, error) {
 		} else {
 			parsedNum, err := strconv.ParseFloat(val, 64)
 			if err != nil {
+				err = parseError(err)
 				return result, err
 			}
 			splited.parsedNums[index] = parsedNum
@@ -207,7 +230,7 @@ func divide(nums []float64) (float64, error) {
 	var result float64
 	for index, num := range nums {
 		if index > 0 && num == 0.0 {
-			return 0.0, errors.New("error: you tried to divide by zero")
+			return 0.0, setError("you tried to divide by zero")
 		}
 		if result == 0 {
 			result = num
@@ -259,19 +282,61 @@ func remove(slice []string, i int) []string {
 func process(params string, interactive bool) {
 	command := checkCommands(params)
 	if command != "" {
-		fmt.Println(command)
+		if command != "-clear-" {
+			fmt.Println(command)
+		}
 	} else {
 		res, err := parseParams(params)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println(setFgColor(RED, setBoldError(err)))
 		} else {
 			if interactive {
-				fmt.Println("=", res)
+				fmt.Println(setFgColor(WHITE, setBold("=")), setBoldFloat(res))
 			} else {
 				fmt.Println(res)
 			}
 		}
 	}
+	if command != "-clear-" {
+		fmt.Println("")
+	}
+}
+
+func parseError(err error) error {
+	errString := err.Error()
+	errSlice := strings.Split(errString, ": ")
+	if len(errSlice) > 2 {
+		err = setError(errSlice[1] + " - " + errSlice[2])
+	}
+	return err
+}
+
+func setError(text string) error {
+	return errors.New("error: " + text)
+}
+
+func setFgColor(color int, text string) string {
+	return fmt.Sprintf("%s%s\033[0m", fmt.Sprintf("\033[3%dm", color), text)
+}
+
+func setBgColor(color int, text string) string {
+	return fmt.Sprintf("%s%s\033[0m", fmt.Sprintf("\033[4%dm", color), text)
+}
+
+func setBold(text string) string {
+	return fmt.Sprintf("\033[1m%s\033[0m", text)
+}
+
+func setBoldError(err error) string {
+	return fmt.Sprintf("\033[1m%s\033[0m", err)
+}
+
+func setBoldFloat(res float64) string {
+	return fmt.Sprintf("\033[1m%v\033[0m", res)
+}
+
+func clear() {
+	fmt.Print("\033[H\033[2J")
 }
 
 func main() {
@@ -283,15 +348,17 @@ func main() {
 	}
 
 	// interactive mode
+	clear()
 	fmt.Println(headInfo)
 	fmt.Println("Type --help for more info")
+	termFText := setBgColor(CYAN, setFgColor(YELLOW, setBold(termText))) + " "
 	for {
 		scanner := bufio.NewScanner(os.Stdin)
-		fmt.Print("icalc> ")
+		fmt.Print("\n" + termFText)
 		for scanner.Scan() {
 			text := strings.TrimSpace(scanner.Text())
 			process(text, true)
-			fmt.Print("icalc> ")
+			fmt.Print(termFText)
 		}
 	}
 }

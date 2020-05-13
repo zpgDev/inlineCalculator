@@ -1,5 +1,7 @@
 ### Inline calculator on GoLang
 
+This is free software with ABSOLUTELY NO WARRANTY.
+
 The inline calculator can work in two modes, console and interactive:
 
 **Console mode:**
@@ -22,6 +24,7 @@ Run inline calculator without arguments
 ````
 -h, --help		for more information about a commands
 -o, --operators		list of supported operators
+c, cls, clear		clear terminal in interactive mode
 q, quit, exit		exit interactive mode
 ````
 
