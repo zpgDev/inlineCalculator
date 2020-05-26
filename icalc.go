@@ -68,8 +68,6 @@ Supported operators:
 	^	exponentiation
 `
 
-var term, termErr = terminal.NewWithStdInOut()
-
 // convert args to float64
 func parseOperands(c []string) ([]float64, error) {
 	var result []float64
@@ -126,8 +124,20 @@ func splitParams(param string) (Splited, error) {
 	return returned, setError("no operator found")
 }
 
-// check input commands
+// check input commands in bash mode
 func checkCommands(command string) string {
+	res := ""
+	switch command {
+		case "-h", "--help":
+			res = "\n" + helpInfo
+		case "-o", "--operators":
+			res = "\n" + operatorsInfo
+	}
+	return res
+}
+
+// check input commands in interactive
+func checkInteractiveCommands(command string, term *terminal.Terminal) string {
 	res := ""
 	switch command {
 		case "exit", "quit", "q":
@@ -310,10 +320,27 @@ func remove(slice []string, i int) []string {
 	return slice[:len(slice)-1]
 }
 
-func process(params string, interactive bool) {
+// bash mode
+func process(params string) {
 	res := 0.0
 	var err error
 	command := checkCommands(params)
+	if command != "" {
+		fmt.Println(command)
+	} else {
+		res, err = parseParams(params)
+		if err != nil {
+			fmt.Println(setFgColor(RED, setBoldError(err)))
+		} else {
+			fmt.Println(res)
+		}
+	}
+}
+
+func interactiveProcess(params string, term *terminal.Terminal) {
+	res := 0.0
+	var err error
+	command := checkInteractiveCommands(params, term)
 	if command != "" {
 		if command != "-clear-" {
 			fmt.Println(command)
@@ -323,23 +350,17 @@ func process(params string, interactive bool) {
 		if err != nil {
 			fmt.Println(setFgColor(RED, setBoldError(err)))
 		} else {
-			if interactive {
-				fmt.Println(setBold("="), setBoldFloat(res))
-			} else {
-				fmt.Println(res)
-			}
+			fmt.Println(setBold("="), setBoldFloat(res))
 		}
 	}
 	if command != "-clear-" {
 		fmt.Println("")
 	}
 
-	if interactive {
-		if err != nil {
-			res = math.NaN()
-		}
-		term.AddResultHistory(res)
+	if err != nil {
+		res = math.NaN()
 	}
+	term.AddResultHistory(res)
 }
 
 func parseError(err error) error {
@@ -382,8 +403,8 @@ func clear() {
 func main() {
 	args := os.Args
 	if len(args) > 1 {
-		// console mode
-		process(args[1], false)
+		// bash mode
+		process(args[1])
 		os.Exit(0)
 	}
 
@@ -393,6 +414,7 @@ func main() {
 	fmt.Println("Type --help for more info")
 	termFText := setBgColor(CYAN, setFgColor(YELLOW, setBold(termText))) + " "
 
+	term, termErr := terminal.NewWithStdInOut()
 	if termErr != nil {
 		panic(termErr)
 	}
@@ -412,6 +434,6 @@ func main() {
 			}
 		}
 		text := strings.TrimSpace(line)
-		process(text, true)
+		interactiveProcess(text, term)
 	}
 }
