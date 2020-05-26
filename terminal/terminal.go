@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sync"
 )
 
@@ -28,7 +29,7 @@ func min(i, j int) int {
 // historyIdxValue returns an index into a valid range of history
 func historyIdxValue(idx int, history [][]byte) int {
 	out := idx
-	out = min(len(history)-1, out)
+	out = min(len(history), out)
 	out = max(0, out)
 	return out
 }
@@ -81,8 +82,12 @@ type Terminal struct {
 	line []byte
 	// history is a buffer of previously entered lines
 	history [][]byte
+	// results history
+	resultsHistory []string
 	// index into the history buffer (for use in the handleKey(KeyUp) function)
 	historyIdx int
+	// used for resultsHistory handling
+	enterIdx int
 	// pos is the logical position of the cursor in line
 	pos int
 	// echo is true if local echo is enabled
@@ -111,20 +116,22 @@ type Terminal struct {
 // "> ").
 func NewTerminal(c io.ReadWriter, prompt string) *Terminal {
 	return &Terminal{
-		Escape:     &vt100EscapeCodes,
-		c:          c,
-		prompt:     prompt,
-		history:    make([][]byte, 0, 100),
-		historyIdx: -1,
-		termWidth:  80,
-		termHeight: 24,
-		echo:       true,
+		Escape:     	&vt100EscapeCodes,
+		c:          	c,
+		prompt:     	prompt,
+		history:    	make([][]byte, 0, 100),
+		resultsHistory: make([]string, 0, 100),
+		historyIdx: 	-1,
+		enterIdx:		0,
+		termWidth:  	80,
+		termHeight: 	24,
+		echo:       	true,
 	}
 }
 
 const (
 	KeyCtrlC     = 3
-	KeyCtrlD     = 4
+	//KeyCtrlD     = 4
 	KeyEnter     = '\r'
 	KeyEscape    = 27
 	KeyBackspace = 127
@@ -138,6 +145,7 @@ const (
 	KeyDelete
 	KeyAltDelete
 	KeyAltBackspace
+	KeyCtrlDelete
 )
 
 // bytesToKey tries to parse a key sequence from b. If successful, it returns
@@ -161,6 +169,8 @@ func bytesToKey(b []byte) (int, []byte) {
 			}
 		} else if b[2] == '3' && b[3] == ';' && b[4] == '3' && b[5] == '~' {
 			return KeyAltDelete, b[6:]
+		} else if b[2] == '3' && b[3] == ';' && b[4] == '5' && b[5] == '~' {
+			return KeyCtrlDelete, b[6:]
 		}
 	}
 
@@ -286,7 +296,7 @@ func (t *Terminal) clearLineToRight() {
 	t.queue(op)
 }
 
-const maxLineLength = 4096
+const maxLineLength = 512
 
 // handleKey processes the given key and, optionally, returns a line of text
 // that the user has entered.
@@ -332,7 +342,7 @@ func (t *Terminal) handleKey(key int) (line string, ok bool) {
 			t.writeLine(t.line[t.pos:])
 		}
 		t.moveCursorToPos(t.pos)
-	case KeyAltDelete:
+	case KeyAltDelete, KeyCtrlDelete:
 		if t.pos == len(t.line) {
 			return
 		}
@@ -424,7 +434,6 @@ func (t *Terminal) handleKey(key int) (line string, ok bool) {
 			newLine = make([]byte, len(h))
 			copy(newLine, h)
 			newPos = len(newLine)
-			//			fmt.Println("in")
 		}
 		if t.echo {
 			t.moveCursorToPos(0)
@@ -448,71 +457,18 @@ func (t *Terminal) handleKey(key int) (line string, ok bool) {
 		t.cursorX = 0
 		t.cursorY = 0
 		t.maxLine = 0
-		if line != "" {
+		match, _ := regexp.MatchString(`\d+`, line)
+		t.enterIdx++
+		if line != "" && match {
 			t.historyIdx = len(t.history) + 1
-		}
-	case KeyCtrlD:
-		// add 'exit' to the end of the line
-		ok = true
-		if len(t.line) == 0 {
-			if len(t.line) == maxLineLength {
-				return
-			}
-			if len(t.line) == cap(t.line) {
-				newLine := make([]byte, len(t.line), 2*(2+len(t.line)))
-				copy(newLine, t.line)
-				t.line = newLine
-			}
-			t.line = t.line[:len(t.line)+4]
-			copy(t.line[t.pos+4:], t.line[t.pos:])
-			t.line[t.pos] = byte('e')
-			if t.echo {
-				t.writeLine(t.line[t.pos:])
-			}
-			t.pos++
-			t.moveCursorToPos(t.pos)
-			t.line[t.pos] = byte('x')
-			if t.echo {
-				t.writeLine(t.line[t.pos:])
-			}
-			t.pos++
-			t.moveCursorToPos(t.pos)
-			t.line[t.pos] = byte('i')
-			if t.echo {
-				t.writeLine(t.line[t.pos:])
-			}
-			t.pos++
-			t.moveCursorToPos(t.pos)
-			t.line[t.pos] = byte('t')
-			if t.echo {
-				t.writeLine(t.line[t.pos:])
-			}
-			t.pos++
-			t.moveCursorToPos(t.pos)
+		} else {
+			t.historyIdx = len(t.history)
 		}
 	case KeyCtrlC:
-		// add '^C' to the end of the line
+		ok = true
 		if len(t.line) == maxLineLength {
 			return
 		}
-		newLine := make([]byte, len(t.line), 2*(2+len(t.line)))
-		copy(newLine, t.line)
-		t.line = newLine
-		t.line = t.line[:len(t.line)+3]
-		copy(t.line[t.pos+3:], t.line[t.pos:])
-		t.line[t.pos] = byte('^')
-		t.pos++
-		t.line[t.pos] = byte('C')
-		if t.echo {
-			t.writeLine(t.line[t.pos-1:])
-		}
-		t.pos ++
-		t.moveCursorToPos(t.pos)
-		t.queue([]byte("\r\n"))
-		t.line = make([]byte, 0, 0)
-		t.pos = 0
-		t.cursorX = 0
-		t.cursorY = 0
 
 	default:
 		if t.AutoCompleteCallback != nil {
@@ -672,12 +628,9 @@ func (t *Terminal) readLine() (line string, err error) {
 			}
 
 			line, lineOk = t.handleKey(key)
-			if key == KeyCtrlD && lineOk == true {
-				return "", io.EOF
-			}
 			if key == KeyCtrlC {
 				t.remainder = nil
-				return "^C", fmt.Errorf("control-c break")
+				return "'q' to close icalc", fmt.Errorf("control-c break")
 			}
 		}
 		if len(rest) > 0 {
@@ -689,8 +642,9 @@ func (t *Terminal) readLine() (line string, err error) {
 		t.c.Write(t.outBuf)
 		t.outBuf = t.outBuf[:0]
 		if lineOk {
-			if t.echo && len(line) > 0 {
-				// don't put passwords into history...
+			// add to history only expressions
+			match, _ := regexp.MatchString(`\d+`, line)
+			if t.echo && len(line) > 0 && match {
 				b := []byte(line)
 				h := make([]byte, len(b))
 				copy(h, b)
@@ -740,11 +694,20 @@ func (t *Terminal) SetHistory(h []string) {
 	// //	t.historyIdx = len(h)
 }
 
+func (t *Terminal) AddResultHistory(h float64) {
+	if t.enterIdx == t.historyIdx {
+		s := fmt.Sprint(h)
+		t.resultsHistory = append(t.resultsHistory, s)
+	} else {
+		t.enterIdx = t.historyIdx
+	}
+}
+
 func (t *Terminal) GetHistory() (h []string) {
-	// h = make([]string, len(t.history))
-	// for i := range t.history {
-	// 	h[i] = string(t.history[i])
-	// }
+	h = make([]string, len(t.history))
+	for i := range t.history {
+		h[i] = string(t.history[i]) + " = " + t.resultsHistory[i]
+	}
 	return
 }
 

@@ -8,7 +8,7 @@
 package main
 
 import (
-	"bufio"
+	"./terminal"
 	"errors"
 	"fmt"
 	"math"
@@ -42,9 +42,9 @@ const termText = " icalc> "
 
 const headInfo = `Inline calculator
 This is free software with ABSOLUTELY NO WARRANTY.
-Usage modes:
-	Console: icalc <operand1><operator><operand2>[<operator><operandN>...] | <command>
-	Interactive: <operand1><operator><operand2>[<operator><operandN>...] | <command>`
+Usage:
+  icalc <operand1><operator><operand2>[<operator><operandN>...] | <command>
+`
 
 var helpInfo = headInfo + `
 
@@ -53,6 +53,7 @@ For interactive mode run icalc without arguments.
 Commands:
 	-h, --help		for more information about a commands
 	-o, --operators		list of supported operators
+	h, history		history of calculations in interactive mode
 	c, cls, clear		clear terminal in interactive mode
 	q, quit, exit		exit interactive mode
 `
@@ -66,6 +67,8 @@ Supported operators:
 	/, :	division
 	^	exponentiation
 `
+
+var term, termErr = terminal.NewWithStdInOut()
 
 // convert args to float64
 func parseOperands(c []string) ([]float64, error) {
@@ -128,10 +131,22 @@ func checkCommands(command string) string {
 	res := ""
 	switch command {
 		case "exit", "quit", "q":
+			_, _ = term.Write([]byte("Exit\r\n"))
+			term.ReleaseFromStdInOut()
 			os.Exit(0)
 		case "clear", "cls", "c":
 			res = "-clear-"
 			clear()
+		case "history", "h":
+			hist := term.GetHistory()
+			fmt.Println("Calculations history:")
+			if len(hist) > 0 {
+				for _, h := range hist {
+					res += "\n" + h
+				}
+			} else {
+				res = "\nNo history found"
+			}
 		case "-h", "--help":
 			res = "\n" + helpInfo
 		case "-o", "--operators":
@@ -143,6 +158,22 @@ func checkCommands(command string) string {
 func parseParams(params string) (float64, error) {
 	result := 0.0
 	err := error(nil)
+
+	// check wrong spaces
+	wrongSpaces, _ := regexp.MatchString(`(\d|\.)+(\s+)(\d|\.)+`, params)
+	if wrongSpaces {
+		return result, setError("invalid syntax")
+	}
+
+	// if number only
+	operandOnly, _ := regexp.MatchString(`^(\d|\.)+(\.)*(\d)*$`, params)
+	if operandOnly {
+		f, err := strconv.ParseFloat(params, 64)
+		if err != nil {
+			return math.NaN(), err
+		}
+		return f, nil
+	}
 
 	splited, err := splitParams(params)
 	if err != nil {
@@ -280,18 +311,20 @@ func remove(slice []string, i int) []string {
 }
 
 func process(params string, interactive bool) {
+	res := 0.0
+	var err error
 	command := checkCommands(params)
 	if command != "" {
 		if command != "-clear-" {
 			fmt.Println(command)
 		}
 	} else {
-		res, err := parseParams(params)
+		res, err = parseParams(params)
 		if err != nil {
 			fmt.Println(setFgColor(RED, setBoldError(err)))
 		} else {
 			if interactive {
-				fmt.Println(setFgColor(WHITE, setBold("=")), setBoldFloat(res))
+				fmt.Println(setBold("="), setBoldFloat(res))
 			} else {
 				fmt.Println(res)
 			}
@@ -299,6 +332,13 @@ func process(params string, interactive bool) {
 	}
 	if command != "-clear-" {
 		fmt.Println("")
+	}
+
+	if interactive {
+		if err != nil {
+			res = math.NaN()
+		}
+		term.AddResultHistory(res)
 	}
 }
 
@@ -352,13 +392,26 @@ func main() {
 	fmt.Println(headInfo)
 	fmt.Println("Type --help for more info")
 	termFText := setBgColor(CYAN, setFgColor(YELLOW, setBold(termText))) + " "
+
+	if termErr != nil {
+		panic(termErr)
+	}
+	defer term.ReleaseFromStdInOut() // defer this
+	fmt.Println("")
+	term.SetPrompt(termFText)
+
 	for {
-		scanner := bufio.NewScanner(os.Stdin)
-		fmt.Print("\n" + termFText)
-		for scanner.Scan() {
-			text := strings.TrimSpace(scanner.Text())
-			process(text, true)
-			fmt.Print(termFText)
+		line, err := term.ReadLine()
+		if err != nil {
+			if strings.Contains(err.Error(), "control-c break") {
+				_, _ = term.Write([]byte(line + "\r\n"))
+				continue
+			} else {
+				fmt.Println("error: ", err)
+				break
+			}
 		}
+		text := strings.TrimSpace(line)
+		process(text, true)
 	}
 }

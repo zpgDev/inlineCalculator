@@ -24,6 +24,7 @@ Run inline calculator without arguments
 ````
 -h, --help		for more information about a commands
 -o, --operators		list of supported operators
+h, history		history of calculations in interactive mode
 c, cls, clear		clear terminal in interactive mode
 q, quit, exit		exit interactive mode
 ````
