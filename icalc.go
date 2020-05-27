@@ -1,7 +1,7 @@
 /**
 	Inline calculator
 	This is free software with ABSOLUTELY NO WARRANTY.
-	Author: Pavlo Zubkov
+	Author: Pavlo Zubkov (zubkov.dev@gmail.com)
 	(c) 2020
  */
 
@@ -36,7 +36,8 @@ type Splited struct {
 }
 
 // The sequence of operators matters!
-var operators = [6]string{"+", "-", "*", "/", ":", "^"}
+var operators = [7]string{"+", "-", "%", "*", "/", ":", "^"}
+var operatorsPattern = `+\-%*/:^`
 
 const termText = " icalc> "
 
@@ -66,6 +67,7 @@ Supported operators:
 	*	multiplication
 	/, :	division
 	^	exponentiation
+	%	modulo
 `
 
 // convert args to float64
@@ -198,7 +200,8 @@ func parseParams(params string) (float64, error) {
 
 	for index, val := range splited.nums {
 		// checking for expressions in operands
-		match, err := regexp.MatchString(`\d+[+\-*/:^]+\d+`, val)
+		match, err := regexp.MatchString(`\d+[` + operatorsPattern + `]+\d+`, val)
+
 		if err != nil {
 			return result, err
 		}
@@ -246,6 +249,8 @@ func calculate(splited Splited) (float64, error) {
 			result, err = divide(nums)
 		case "^":
 			result = pow(nums)
+		case "%":
+			result, err = modd(nums)
 		case "+":
 			result = add(nums)
 		case "-":
@@ -292,6 +297,21 @@ func pow(nums []float64) float64 {
 		}
 	}
 	return result
+}
+
+func modd(nums []float64) (float64, error) {
+	var result float64
+	for index, num := range nums {
+		if index > 0 && num == 0.0 {
+			return 0.0, setError("Modulo by zero")
+		}
+		if index == 0 && result == 0 {
+			result = num
+		} else {
+			result = math.Mod(result, num)
+		}
+	}
+	return result, nil
 }
 
 func add(nums []float64) float64 {

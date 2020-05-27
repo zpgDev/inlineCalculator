@@ -37,4 +37,5 @@ q, quit, exit		exit interactive mode
 *	multiplication
 /, :	division
 ^	exponentiation
+%	modulo
 ````
