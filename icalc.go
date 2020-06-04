@@ -39,16 +39,20 @@ type Splited struct {
 var operators = [7]string{"+", "-", "%", "*", "/", ":", "^"}
 var operatorsPattern = `+\-%*/:^`
 
+var isParentheses bool
+// max available iterations in recursive calls
+var iteration = 1000
+
 const termText = " icalc> "
 
 const headInfo = `Inline calculator
+(c) 2020 Pavlo Zubkov
 This is free software with ABSOLUTELY NO WARRANTY.
 Usage:
   icalc <operand1><operator><operand2>[<operator><operandN>...] | <command>
 `
 
 var helpInfo = headInfo + `
-
 For interactive mode run icalc without arguments.
 
 Commands:
@@ -60,7 +64,6 @@ Commands:
 `
 
 var operatorsInfo = headInfo + `
-
 Supported operators:
 	+	addition
 	-	subtraction
@@ -87,14 +90,6 @@ func parseOperands(c []string) ([]float64, error) {
 // split expression by operator
 func splitParams(param string) (Splited, error) {
 	var returned Splited
-	// remove all spaces in expression
-	param = strings.Replace(param, " ", "", -1)
-	// bringing to a single operator
-	param = strings.Replace(param, ":", "/", -1)
-	if param == "" {
-		return returned, setError("no params found")
-	}
-
 	for _, operator := range operators {
 		param = strings.Replace(param, "." + operator, operator, -1)
 		pattern := `\d+\` + operator
@@ -126,68 +121,95 @@ func splitParams(param string) (Splited, error) {
 	return returned, setError("no operator found")
 }
 
-// check input commands in bash mode
-func checkCommands(command string) string {
-	res := ""
-	switch command {
-		case "-h", "--help":
-			res = "\n" + helpInfo
-		case "-o", "--operators":
-			res = "\n" + operatorsInfo
-	}
-	return res
-}
+// parsing and calculation expressions in parentheses
+func parseParentheses(params string) (string, error) {
+	var err error
 
-// check input commands in interactive
-func checkInteractiveCommands(command string, term *terminal.Terminal) string {
-	res := ""
-	switch command {
-		case "exit", "quit", "q":
-			_, _ = term.Write([]byte("Exit\r\n"))
-			term.ReleaseFromStdInOut()
-			os.Exit(0)
-		case "clear", "cls", "c":
-			res = "-clear-"
-			clear()
-		case "history", "h":
-			hist := term.GetHistory()
-			fmt.Println("Calculations history:")
-			if len(hist) > 0 {
-				for _, h := range hist {
-					res += "\n" + h
-				}
-			} else {
-				res = "\nNo history found"
-			}
-		case "-h", "--help":
-			res = "\n" + helpInfo
-		case "-o", "--operators":
-			res = "\n" + operatorsInfo
+	// check iteration limit
+	if iteration <= 0 {
+		iteration = 1000
+		return "", setError("iteration limit is reached")
 	}
-	return res
+	iteration--
+
+	// TODO: optimize
+	outerParentheses := regexp.MustCompile(`^\(([\d.` + operatorsPattern + `]+|(?:[\d.` + operatorsPattern + `]*\([\d.` + operatorsPattern + `()]*\)[\d.` + operatorsPattern + `]*)+)\)$`)
+
+	// remove parent parentheses (5+5) if exists
+	oRes := outerParentheses.FindStringSubmatch(params)
+	if len(oRes) == 2 {
+		params = oRes[1]
+
+		// check if another parent parentheses present
+		oRes = outerParentheses.FindStringSubmatch(params)
+		if len(oRes) == 2 {
+			return parseParentheses(params)
+		}
+	}
+
+	// calculate parentheses expression and replace it by result
+	innerParentheses := regexp.MustCompile(`\(([\d.` + operatorsPattern + `]+)\)`)
+	params = innerParentheses.ReplaceAllStringFunc(params, func(s string) string {
+		var br float64
+		var numberOnly bool
+		isParentheses = false
+
+		// remove parentheses from expression
+		sRes := innerParentheses.FindStringSubmatch(s)
+		if len(sRes) == 2 {
+			s = sRes[1]
+		}
+
+		// if only number in parentheses
+		numberOnly, err = regexp.MatchString(`^([\d.]+)$`, s)
+		if err != nil {
+			return ""
+		}
+		if numberOnly {
+			return s
+		}
+
+		// parse and calculate expression
+		br, err = parseParams(s)
+		if err != nil {
+			return ""
+		}
+
+		return fmt.Sprint(br)
+	})
+
+	// check if parentheses present
+	isParentheses, err = regexp.MatchString(`\(.*\)`, params)
+	if err != nil {
+		return params, err
+	}
+	if isParentheses {
+		return parseParentheses(params)
+	}
+
+	return params, err
 }
 
 func parseParams(params string) (float64, error) {
-	result := 0.0
-	err := error(nil)
+	var result float64
+	var err error
+	var splited Splited
 
-	// check wrong spaces
-	wrongSpaces, _ := regexp.MatchString(`(\d|\.)+(\s+)(\d|\.)+`, params)
-	if wrongSpaces {
-		return result, setError("invalid syntax")
+	// check iteration limit
+	if iteration <= 0 {
+		iteration = 1000
+		return result, setError("iteration limit is reached")
 	}
+	iteration--
 
-	// if number only
-	operandOnly, _ := regexp.MatchString(`^(\d|\.)+(\.)*(\d)*$`, params)
-	if operandOnly {
-		f, err := strconv.ParseFloat(params, 64)
+	if isParentheses {
+		params, err = parseParentheses(params)
 		if err != nil {
-			return math.NaN(), err
+			return result, err
 		}
-		return f, nil
 	}
 
-	splited, err := splitParams(params)
+	splited, err = splitParams(params)
 	if err != nil {
 		return result, err
 	}
@@ -200,7 +222,7 @@ func parseParams(params string) (float64, error) {
 
 	for index, val := range splited.nums {
 		// checking for expressions in operands
-		match, err := regexp.MatchString(`\d+[` + operatorsPattern + `]+\d+`, val)
+		match, err := regexp.MatchString(`\d+(\.*)[` + operatorsPattern + `]+(\.*)\d+`, val)
 
 		if err != nil {
 			return result, err
@@ -230,40 +252,39 @@ func parseParams(params string) (float64, error) {
 }
 
 func calculate(splited Splited) (float64, error) {
-	result := 0.0
+	var result float64
 	var nums []float64
-	err := error(nil)
+	var err error
+
 	if len(splited.parsedNums) > 1 {
 		nums = splited.parsedNums
 	} else {
 		nums, err = parseOperands(splited.nums)
-		if err != nil {
-			return 0.0, err
+	}
+
+	if err == nil {
+		switch splited.operator {
+			case "*":
+				result = multiply(nums)
+			case "/":
+				result, err = divide(nums)
+			case "^":
+				result = pow(nums)
+			case "%":
+				result, err = modd(nums)
+			case "+":
+				result = add(nums)
+			case "-":
+				result = subtract(nums)
+			default:
+				err = setError("unsupported operator")
 		}
 	}
 
-	switch splited.operator {
-		case "*":
-			result = multiply(nums)
-		case "/":
-			result, err = divide(nums)
-		case "^":
-			result = pow(nums)
-		case "%":
-			result, err = modd(nums)
-		case "+":
-			result = add(nums)
-		case "-":
-			result = subtract(nums)
-	}
-
-	if err != nil {
-		return 0.0, err
-	}
-
-	return result, nil
+	return result, err
 }
 
+// math functions start
 func multiply(nums []float64) float64 {
 	result := 1.0
 	for _, num := range nums {
@@ -333,6 +354,7 @@ func subtract(nums []float64) float64 {
 	}
 	return result
 }
+// math functions end
 
 // remove element from slice
 func remove(slice []string, i int) []string {
@@ -340,47 +362,208 @@ func remove(slice []string, i int) []string {
 	return slice[:len(slice)-1]
 }
 
+// check input commands in bash mode
+func checkCommands(command string) string {
+	res := ""
+	switch command {
+	case "-h", "--help":
+		res = helpInfo
+	case "-o", "--operators":
+		res = operatorsInfo
+	default:
+		res = "Command not found"
+	}
+	return res
+}
+
+// check input commands in interactive
+func checkInteractiveCommands(command string, term *terminal.Terminal) string {
+	res := ""
+	switch command {
+	case "exit", "quit", "q":
+		exitCommand(term)
+	case "clear", "cls", "c":
+		res = "-clear-"
+		clear()
+	case "history", "h":
+		hist := term.GetHistory()
+		fmt.Println("Calculations history:")
+		if len(hist) > 0 {
+			for _, h := range hist {
+				res += "\n" + h
+			}
+		} else {
+			res = "\nNo history found"
+		}
+	case "-h", "--help":
+		res = "\n" + helpInfo
+	case "-o", "--operators":
+		res = "\n" + operatorsInfo
+	default:
+		res = "\nCommand not found"
+	}
+	return res
+}
+
+// exit interactive mode
+func exitCommand(term *terminal.Terminal) {
+	_, _ = term.Write([]byte("Exit\r\n"))
+	term.ReleaseFromStdInOut()
+	fmt.Println("")
+	os.Exit(0)
+}
+
+// check if input is command
+func checkIsCommand(params string) (bool, error) {
+	return regexp.MatchString(`^([-a-zA-Z]+)+([^\d])*$`, params)
+}
+
 // bash mode
 func process(params string) {
 	res := 0.0
 	var err error
-	command := checkCommands(params)
-	if command != "" {
-		fmt.Println(command)
-	} else {
-		res, err = parseParams(params)
-		if err != nil {
-			fmt.Println(setFgColor(RED, setBoldError(err)))
+	var isCommand bool
+	command := ""
+
+	// check if command
+	isCommand, err = checkIsCommand(params)
+
+	if err == nil {
+		if isCommand {
+			command = checkCommands(params)
+			if command != "" {
+				fmt.Println(command)
+			}
 		} else {
-			fmt.Println(res)
+			var operandOnly bool
+			operandOnly, err = checkInput(params)
+			if err == nil {
+				params, err = cleanParams(params)
+				if err == nil {
+					if operandOnly {
+						// if number only
+						res, err = strconv.ParseFloat(params, 64)
+						if err != nil {
+							err = parseError(err)
+						}
+					} else {
+						res, err = parseParams(params)
+					}
+					if err == nil {
+						fmt.Println(res)
+					}
+				}
+			}
 		}
+	}
+
+	if err != nil {
+		fmt.Println(setFgColor(RED, setBoldError(err)))
 	}
 }
 
 func interactiveProcess(params string, term *terminal.Terminal) {
 	res := 0.0
 	var err error
-	command := checkInteractiveCommands(params, term)
-	if command != "" {
-		if command != "-clear-" {
-			fmt.Println(command)
-		}
-	} else {
-		res, err = parseParams(params)
-		if err != nil {
-			fmt.Println(setFgColor(RED, setBoldError(err)))
+	var isCommand bool
+	command := ""
+
+	// check if command
+	isCommand, err = checkIsCommand(params)
+
+	if err == nil {
+	 	if isCommand {
+			command = checkInteractiveCommands(params, term)
+			if command != "" {
+				if command != "-clear-" {
+					fmt.Println(command)
+				}
+			}
 		} else {
-			fmt.Println(setBold("="), setBoldFloat(res))
+			var operandOnly bool
+			operandOnly, err = checkInput(params)
+			if err == nil {
+				params, err = cleanParams(params)
+				if err == nil {
+					if operandOnly {
+						// if only number
+						res, err = strconv.ParseFloat(params, 64)
+						if err != nil {
+							err = parseError(err)
+						}
+					} else {
+						res, err = parseParams(params)
+					}
+					if err == nil {
+						fmt.Println(setBold("="), setBoldFloat(res))
+					}
+				}
+			}
 		}
 	}
+
+	if err != nil {
+		fmt.Println(setFgColor(RED, setBoldError(err)))
+		res = math.NaN()
+	}
+
 	if command != "-clear-" {
 		fmt.Println("")
 	}
 
-	if err != nil {
-		res = math.NaN()
-	}
+	isParentheses = false
+
+	// add result to history
 	term.AddResultHistory(res)
+}
+
+// clean input params
+func cleanParams(params string) (string, error) {
+	var err error
+
+	// remove all spaces in expression
+	params = strings.Replace(params, " ", "", -1)
+
+	if isParentheses {
+		params, err = cleanParentheses(params)
+	}
+
+	if params == "" {
+		return params, setError("no params found")
+	}
+
+	// bringing to a single operator
+	params = strings.Replace(params, ":", "/", -1)
+
+	return params, err
+}
+
+// clean input params
+func cleanParentheses(params string) (string, error) {
+	var err error
+
+	// check iteration limit
+	if iteration <= 0 {
+		iteration = 1000
+		return  "", setError("iteration limit is reached")
+	}
+	iteration--
+
+	prPattern := regexp.MustCompile(`(?:\()([\s\d.]*)(?:\))`)
+	params = prPattern.ReplaceAllStringFunc(params, func(s string) string {
+		p := prPattern.FindStringSubmatch(s)
+		if len(p) == 2 {
+			s = p[1]
+		}
+
+		return s
+	})
+
+	if prPattern.MatchString(params) {
+		return cleanParentheses(params)
+	}
+
+	return params, err
 }
 
 func parseError(err error) error {
@@ -416,8 +599,62 @@ func setBoldFloat(res float64) string {
 	return fmt.Sprintf("\033[1m%v\033[0m", res)
 }
 
+// clear terminal
 func clear() {
 	fmt.Print("\033[H\033[2J")
+}
+
+// check for correct input
+func checkInput(params string) (bool, error) {
+	var err error
+	var wrongSpaces bool
+	var containSymbol bool
+	var invalidSyntax bool
+
+	// check parentheses
+	openPattern := regexp.MustCompile(`\(`)
+	closePattern := regexp.MustCompile(`\)`)
+	openB := openPattern.FindAllString(params, -1)
+	closeB := closePattern.FindAllString(params, -1)
+	if len(openB) != len(closeB) {
+		return false, setError("Invalid syntax: Parentheses mismatch")
+	} else if len(openB) > 0 && len(closeB) > 0 {
+		isParentheses = true
+	}
+
+	// check if expression contains symbols
+	containSymbol, err = regexp.MatchString(`([a-zA-Z]+)`, params)
+	if err != nil {
+		return false, err
+	}
+	if containSymbol {
+		err = setError("Invalid syntax: The expression contains symbols")
+		return false, err
+	}
+
+	// check invalid syntax
+	invalidSyntax, err = regexp.MatchString(`\)[\s\d.]*\(|(\s*[\d.]+\s*)\(|\)(\s*[\d.]+\s*)`, params)
+	if err != nil {
+		return false, err
+	}
+	if invalidSyntax {
+		err = setError("Invalid syntax")
+		return false, err
+	}
+
+	// check wrong spaces
+	wrongSpaces, err = regexp.MatchString(`(?:\d|\.)+(\s)+(?:\d|\.)+`, params)
+	if err != nil {
+		return false, err
+	}
+	if wrongSpaces {
+		return false, setError("Invalid syntax: Wrong space entered")
+	}
+
+	// if number only
+	operandOnly, err := regexp.MatchString(`^(\()*(\s)*(\d|\.)+(\.)*(\d)*(\s)*(\))*$`, params)
+
+	return operandOnly, err
 }
 
 func main() {
@@ -432,7 +669,6 @@ func main() {
 	clear()
 	fmt.Println(headInfo)
 	fmt.Println("Type --help for more info")
-	termFText := setBgColor(CYAN, setFgColor(YELLOW, setBold(termText))) + " "
 
 	term, termErr := terminal.NewWithStdInOut()
 	if termErr != nil {
@@ -440,14 +676,15 @@ func main() {
 	}
 	defer term.ReleaseFromStdInOut() // defer this
 	fmt.Println("")
+
+	termFText := setBgColor(CYAN, setFgColor(YELLOW, setBold(termText))) + " "
 	term.SetPrompt(termFText)
 
 	for {
 		line, err := term.ReadLine()
 		if err != nil {
 			if strings.Contains(err.Error(), "control-c break") {
-				_, _ = term.Write([]byte(line + "\r\n"))
-				continue
+				exitCommand(term)
 			} else {
 				fmt.Println("error: ", err)
 				break

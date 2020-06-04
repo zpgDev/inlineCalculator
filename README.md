@@ -7,10 +7,13 @@ The inline calculator can work in two modes, console and interactive:
 **Console mode:**
 Run inline calculator with expression or command
 
-``go run icalc.go <operand1><operator><operand2>[<operator><operandN>...] | <command>``
+``go run icalc.go '<operand1><operator><operand2>[<operator><operandN>...]' | <command>``
 
 Example:
+
 ``go run icalc.go 2+2*2``
+
+``go run icalc.go '(2+2)*2'``
 
 **Interactive mode:**
 Run inline calculator without arguments
